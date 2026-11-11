@@ -220,9 +220,56 @@ tr.warn td { background: #fffbeb; }
 .modal h2 { margin-bottom: 12px; }
 .modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18px; }
 
+/* ---------- گزارش ماهانه (صفحه و چاپ A4) ---------- */
+.month-sheet { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; padding: 28px 32px; }
+.m-head { border-bottom: 1px solid var(--line); padding-bottom: 14px; display: flex; flex-direction: column; gap: 4px; }
+.m-head h1 { font-size: 26px; }
+.m-tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.m-tiles div { border: 1px solid var(--line); border-radius: 14px; padding: 12px; text-align: center; background: var(--surface-2); }
+.m-tiles span { display: block; font-size: 13px; color: var(--muted); }
+.m-tiles b { font-size: 24px; font-weight: 800; color: var(--primary); }
+.m-table th { text-align: center; line-height: 1.4; }
+.m-table th small { font-weight: 500; font-size: 11px; }
+.m-table td { text-align: center; }
+.m-table td:first-child { text-align: right; }
+.m-table td.bad { color: var(--rose); font-weight: 700; }
+.m-table tr.total td { background: var(--surface-2); font-weight: 700; font-size: 15px; }
+.m-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.m-chart h3 { margin-bottom: 6px; }
+.m-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; height: 210px; padding-top: 24px; border-bottom: 1px solid var(--line); }
+.m-col { display: flex; flex-direction: column; height: 100%; align-items: center; }
+.m-area { position: relative; flex: 1; width: 100%; max-width: 64px; display: flex; align-items: flex-end; }
+.m-bar { width: 100%; border-radius: 10px 10px 3px 3px; }
+.m-target { position: absolute; left: -6px; right: -6px; height: 3px; background: var(--amber); border-radius: 3px; }
+.m-val { position: absolute; left: -10px; right: -10px; text-align: center; font-size: 13px; font-weight: 700; }
+.m-lbl { font-size: 12px; color: var(--muted); margin: 6px 0 -26px; }
+.m-sign { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; margin-top: 46px; color: var(--muted); }
+.m-sign div { border-bottom: 1px solid var(--line); padding-bottom: 50px; }
+@media (max-width: 600px) {
+  .month-sheet { padding: 16px; }
+  .m-tiles { grid-template-columns: repeat(2, 1fr); }
+  .m-charts { grid-template-columns: 1fr; }
+}
+
 /* ---------- کارت چاپی اطلاعات ورود ---------- */
 .print-only { display: none; }
 @media print {
+  @page { size: A4; margin: 12mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  .month-sheet { box-shadow: none; border: 0; padding: 0; max-width: none; gap: 14px; }
+  .month-sheet .table-wrap { overflow: visible; border: 1px solid var(--line); }
+  .month-sheet th { position: static; }
+  .m-tiles, .m-charts { grid-template-columns: repeat(4, 1fr); }
+  .m-charts { grid-template-columns: 1fr 1fr; }
+  /* همه گزارش ماهانه در یک برگه A4 جا شود */
+  .m-head h1 { font-size: 22px; }
+  .m-tiles b { font-size: 20px; }
+  .month-sheet th, .month-sheet td { padding: 6px 10px; }
+  .month-sheet { gap: 10px; }
+  .m-bars { height: 130px; }
+  .m-sign { margin-top: 22px; }
+  .m-sign div { padding-bottom: 30px; }
+  .shell { min-height: 0; }
   body { background: #fff; }
   .no-print, .sidebar, .demo-bar, .bottom-nav { display: none !important; }
   .print-only { display: block; }

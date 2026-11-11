@@ -564,14 +564,15 @@
 
   // ---------- صفحه یک شاگرد (برای کادر) ----------
   async function studentDetailView(id) {
-    const [s, w, hist, fb, pm] = await Promise.all([
-      Store.student(id), Store.week(id), Store.history(id), Store.feedbackFor(id), Store.parentMessagesFor(id)]);
-    const staff = me.role === "manager" || me.role === "advisor" ? await Store.staff() : [];
-    const sups = staff.find((a) => a.id === s.advisorId)?.supporters || [];
     const isLead = me.role === "manager" || me.role === "advisor";
+    const [s, w, hist, fb, pm, notes] = await Promise.all([
+      Store.student(id), Store.week(id), Store.history(id), Store.feedbackFor(id), Store.parentMessagesFor(id),
+      isLead ? Store.myNotes(id) : []]);
+    const staff = isLead ? await Store.staff() : [];
+    const sups = staff.find((a) => a.id === s.advisorId)?.supporters || [];
     await layout("students", `
       ${pageHead(esc(s.name), `مشاور: ${esc(s.advisorName)} · پشتیبان: ${esc(s.supporterName || "ندارد")} · ${s.streak ? "🔥 " + fa(s.streak) + " روز پیاپی" : "بدون استریک"}`,
-        `<a class="btn" href="#/students">→ بازگشت</a>`)}
+        `<a class="btn primary" href="#/month/${id}">🗓 گزارش ماهانه (چاپ)</a><a class="btn" href="#/students">→ بازگشت</a>`)}
       <div class="card no-print"><div class="row">
         <button class="btn primary" data-a="fbs">💬 بازخورد به شاگرد</button>
         ${me.role === "supporter" ? `<button class="btn" data-a="fba">📝 گزارش به مشاور</button>` : ""}
@@ -586,6 +587,14 @@
       <div class="grid cols-2" style="margin-top:16px">
         <div class="card"><div class="card-head"><h2>گزارش‌های روزانه</h2></div>${historyHtml(hist)}</div>
         <div class="stack">
+          ${isLead ? `<div class="card note-card"><div class="card-head"><h2>🔒 یادداشت محرمانه من</h2></div>
+            <p class="muted small" style="margin-top:-6px">فقط خودتان این یادداشت‌ها را می‌بینید؛ شاگرد، اولیا، پشتیبان و سایر مشاوران (حتی مدیر) نمی‌بینند.</p>
+            <form id="note-form" class="stack" style="gap:8px"><textarea class="input" id="note-text" style="min-height:90px" placeholder="مثلاً: مشکل خانوادگی دارد؛ هفته بعد با مادرش صحبت کنم."></textarea>
+              <div><button class="btn primary sm">ذخیره یادداشت</button></div></form>
+            ${notes.length ? `<div class="list" style="margin-top:8px">${notes.map((n) => `<div class="list-item"><div class="grow">
+              <div class="muted small">${esc(U.faDateTime(n.createdAt))}</div><div class="msg-text">${esc(n.text)}</div></div>
+              <button class="btn ghost sm" data-note-del="${n.id}" title="حذف">🗑</button></div>`).join("")}</div>` : ""}
+          </div>` : ""}
           <div class="card"><div class="card-head"><h2>بازخوردها</h2></div>${feedbackListHtml(fb, true)}</div>
           ${isLead ? `<div class="card"><div class="card-head"><h2>پیام‌های اولیا</h2></div>${pm.length ? `<div class="list">${pm.map((m) => `
             <div class="list-item"><div class="grow"><div class="row"><b>${m.kind === "card" ? "📊 کارنامه هفتگی" : "✉️ پیام"}</b>
@@ -613,11 +622,73 @@
       }
       again();
     });
+    qs("#note-form")?.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      await run(() => Store.addNote(id, qs("#note-text").value), "یادداشت ذخیره شد 🔒");
+      again();
+    });
+    on("[data-note-del]", "click", async (e) => {
+      if (!await confirmBox("حذف یادداشت", "این یادداشت حذف می‌شود.", "حذف کن")) return;
+      await run(() => Store.deleteNote(e.currentTarget.dataset.noteDel), "حذف شد");
+      again();
+    });
     qs("#d-sup")?.addEventListener("change", async (e) => {
       if (!e.target.value) return;
       await run(() => Store.assignSupporter([id], e.target.value === "__none" ? null : e.target.value), "پشتیبان ثبت شد");
       again();
     });
+  }
+
+  // ---------- گزارش ماهانه قابل چاپ ----------
+  async function monthView(id) {
+    const m = await Store.month(id);
+    const L = m.limits, t = m.total;
+    const pct = t.target ? Math.round((t.study / t.target) * 100) : null;
+    const range = (a, b) => `${U.faDate(a)} تا ${U.faDate(b)}`;
+    const year = U.faDate(m.last, { year: "numeric" });
+    const numCls = (bad) => `num${bad ? " bad" : ""}`;
+    const row = (label, sub, s, total = false) => `<tr class="${total ? "total" : ""}">
+      <td><b>${label}</b>${sub ? `<div class="muted small">${sub}</div>` : ""}</td>
+      <td class="num"><b>${fa(s.study)}</b></td><td class="num muted">${fa(s.target)}</td><td class="num">${fa(s.tests)}</td>
+      <td class="${numCls(s.sleep != null && (s.sleep < L.SLEEP_MIN || s.sleep > L.SLEEP_MAX))}">${fa(s.sleep)}</td>
+      <td class="${numCls(s.phone != null && s.phone > L.PHONE_WARN)}">${fa(s.phone)}</td>
+      <td class="num">${fa(s.class)}</td><td class="num">${fa(s.days)}</td></tr>`;
+    const chart = (title, unit, key, color, withTarget) => {
+      const peak = Math.max(1, ...m.weeks.map((w) => Math.max(w[key], withTarget ? w.target : 0)));
+      return `<div class="m-chart"><div class="row"><h3>${title}</h3><span class="spacer"></span><span class="muted small">${unit}</span></div>
+        <div class="m-bars">${m.weeks.map((w, i) => {
+          const h = (w[key] / peak) * 100, tg = withTarget && w.target ? (w.target / peak) * 100 : null;
+          return `<div class="m-col"><div class="m-area">
+            <div class="m-bar" style="height:${Math.max(h, 1)}%;background:${color}"></div>
+            ${tg != null ? `<div class="m-target" style="bottom:${tg}%"></div>` : ""}
+            <div class="m-val" style="bottom:calc(${Math.max(h, tg || 0)}% + 4px)">${fa(w[key])}</div></div>
+            <div class="m-lbl">هفته ${fa(i + 1)}</div></div>`;
+        }).join("")}</div></div>`;
+    };
+    await layout("students", `
+      <div class="row no-print" style="margin-bottom:16px"><button class="btn primary" id="m-print">🖨 چاپ گزارش</button>
+        <a class="btn" href="#/student/${id}">→ بازگشت به صفحه شاگرد</a><span class="muted small">در پنجره چاپ می‌توانید «ذخیره به‌صورت PDF» را هم انتخاب کنید.</span></div>
+      <div class="month-sheet card">
+        <div class="m-head"><div class="muted">${esc(Store.INSTITUTE)}</div><h1>گزارش ماهانه عملکرد درسی</h1>
+          <div>داوطلب: <b>${esc(m.student.name)}</b> &nbsp;•&nbsp; مشاور: <b>${esc(m.advisorName)}</b></div>
+          <div class="muted">بازه: ${esc(range(m.first, m.last))} ${esc(year)} (۴ هفته اخیر)</div></div>
+        <div class="m-tiles">
+          <div><span>مجموع مطالعه</span><b>${fa(t.study)} ساعت</b></div>
+          <div><span>تحقق هدف</span><b style="color:${pct >= 100 ? "var(--teal)" : "var(--primary)"}">${pct == null ? "–" : fa(pct) + "٪"}</b></div>
+          <div><span>مجموع تست</span><b>${fa(t.tests)}</b></div>
+          <div><span>روزهای فعال</span><b style="color:var(--teal)">${fa(t.days)} از ۲۸</b></div>
+        </div>
+        <div class="table-wrap"><table class="m-table"><thead><tr><th>هفته</th><th>مطالعه<br><small>(ساعت)</small></th><th>هدف<br><small>(ساعت)</small></th>
+          <th>تست<br><small>(تعداد)</small></th><th>خواب<br><small>(میانگین روزانه)</small></th><th>موبایل<br><small>(میانگین روزانه)</small></th>
+          <th>کلاس<br><small>(ساعت)</small></th><th>روز<br><small>فعال</small></th></tr></thead><tbody>
+          ${m.weeks.map((w, i) => row(`هفته ${fa(i + 1)}`, range(w.start, w.end), w)).join("")}
+          ${row("جمع / میانگین ماه", "", t, true)}</tbody></table></div>
+        <p class="muted small">خواب کمتر از ${fa(L.SLEEP_MIN)} یا بیشتر از ${fa(L.SLEEP_MAX)} ساعت و موبایل بیشتر از ${fa(L.PHONE_WARN)} ساعت در روز با رنگ قرمز مشخص شده است.</p>
+        <div class="m-charts">${chart("مطالعه هر هفته", "ساعت (خط زرد = هدف)", "study", "var(--primary)", true)}${chart("تست هر هفته", "تعداد", "tests", "var(--teal)", false)}</div>
+        <div class="m-sign"><div>امضای مشاور</div><div>امضای ولی</div></div>
+        <div class="muted small" style="text-align:center">تاریخ تهیه: ${esc(U.faDate(U.studyDay(), { day: "numeric", month: "long", year: "numeric" }))} • ${esc(Store.INSTITUTE)}</div>
+      </div>`);
+    qs("#m-print").addEventListener("click", () => window.print());
   }
 
   // ---------- کادر: مشاوران و پشتیبان‌ها ----------
@@ -759,8 +830,8 @@
   // ---------- مسیریابی ----------
   const HOME = { manager: "dashboard", advisor: "dashboard", supporter: "dashboard", student: "today", parent: "child" };
   const ROUTES = {
-    manager: { dashboard: dashboardView, students: studentsView, import: importView, staff: staffView, inbox: inboxView, student: studentDetailView },
-    supporter: { dashboard: dashboardView, students: studentsView, student: studentDetailView },
+    manager: { dashboard: dashboardView, students: studentsView, import: importView, staff: staffView, inbox: inboxView, student: studentDetailView, month: monthView },
+    supporter: { dashboard: dashboardView, students: studentsView, student: studentDetailView, month: monthView },
     student: { today: todayView, week: myWeekView, messages: messagesView },
     parent: { child: childView },
   };
@@ -774,7 +845,7 @@
     const view = (ROUTES[me.role] || {})[name];
     if (!view) { location.replace(`#/${HOME[me.role]}`); return; }
     try {
-      await view(name === "student" ? arg : new URLSearchParams(query || ""));
+      await view(name === "student" || name === "month" ? arg : new URLSearchParams(query || ""));
       window.scrollTo(0, 0);
     } catch (e) {
       toast(e.message, true);

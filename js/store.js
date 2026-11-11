@@ -15,6 +15,7 @@ const Store = (() => {
   function load() {
     try { db = JSON.parse(localStorage.getItem(DB_KEY)); } catch { db = null; }
     if (!db || !Array.isArray(db.users)) { db = seed(); save(); }
+    db.notes = db.notes || []; // داده‌های ذخیره‌شده از نسخه‌های قبل یادداشت ندارند
   }
   function save() {
     try { localStorage.setItem(DB_KEY, JSON.stringify(db)); } catch (e) { console.warn("ذخیره نشد", e); }
@@ -26,7 +27,7 @@ const Store = (() => {
   function seed() {
     let s = 7;
     const rand = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-    const d = { users: [], reports: [], tasks: [], feedback: [], parentMessages: [], meta: { version: 1, seededAt: now() } };
+    const d = { users: [], reports: [], tasks: [], feedback: [], parentMessages: [], notes: [], meta: { version: 1, seededAt: now() } };
     const add = (u) => { const user = { id: U.uid("u"), phone: "", createdAt: now(), ...u }; d.users.push(user); return user; };
 
     const manager = add({ role: "manager", name: "دکتر خاکسار", username: "admin", password: "1234" });
@@ -50,7 +51,8 @@ const Store = (() => {
         advisorId: adv.id, supporterId: sup ? sup.id : null, phone: `0912${U.randomDigits(7)}` });
       if (i % 4 !== 3) add({ role: "parent", name: `ولی ${name}`, username: `p${1001 + i}`, password: "1234", studentId: st.id });
       const diligence = 0.55 + rand() * 0.45;
-      U.lastDays(7).forEach((day, k) => {
+      // ۴ هفته داده نمونه تا گزارش ماهانه هم پر باشد
+      U.lastDays(28).forEach((day, k) => {
         const isToday = day === today;
         if (rand() > diligence + 0.15) return; // روز بدون گزارش
         const th = [6, 7, 8, 8, 9, 10][Math.floor(rand() * 6)];
@@ -65,7 +67,7 @@ const Store = (() => {
           r.phoneHours = Math.round((0.5 + rand() * 3.5) * 2) / 2;
         }
         d.reports.push(r);
-        if (k >= 5) {
+        if (k >= 26) {
           ["زیست فصل ۲", "فیزیک حرکت‌شناسی", "۴۰ تست شیمی"].forEach((title, j) =>
             d.tasks.push({ id: U.uid("t"), studentId: st.id, date: day, title, done: rand() < 0.6 || j === 0 }));
         }
@@ -328,6 +330,7 @@ const Store = (() => {
     db.tasks = db.tasks.filter((t) => !set.has(t.studentId));
     db.feedback = db.feedback.filter((f) => !set.has(f.studentId));
     db.parentMessages = db.parentMessages.filter((m) => !set.has(m.studentId));
+    db.notes = db.notes.filter((n) => !set.has(n.studentId));
     save();
     return set.size;
   }
@@ -440,6 +443,54 @@ const Store = (() => {
       streak: streakOf(st.id), limits: { SLEEP_MIN, SLEEP_MAX, PHONE_WARN },
     };
   }
+  // گزارش ماهانه: ۴ هفته اخیر (۲۸ روز)، هر هفته جمع مطالعه و تست و میانگین خواب و موبایل
+  async function month(studentId) {
+    const v = viewer();
+    const st = studentFor(v, studentId);
+    const days = U.lastDays(28);
+    const summarize = (list) => {
+      const rs = list.map((d) => reportOf(st.id, d)).filter(Boolean);
+      const done = rs.filter((r) => r.doneHours != null);
+      const avg = (arr, k) => { const vals = arr.filter((r) => r[k] != null); return vals.length ? Math.round(vals.reduce((s, r) => s + r[k], 0) / vals.length * 10) / 10 : null; };
+      const sum = (k) => Math.round(done.reduce((s, r) => s + (r[k] || 0), 0) * 10) / 10;
+      return { study: sum("doneHours"), target: sum("targetHours"), tests: sum("doneTests"), class: sum("classHours"),
+        sleep: avg(rs, "sleep"), phone: avg(done, "phoneHours"), days: done.length };
+    };
+    const weeks = [0, 1, 2, 3].map((w) => {
+      const list = days.slice(w * 7, w * 7 + 7);
+      return { start: list[0], end: list[6], ...summarize(list) };
+    });
+    const adv = byId(st.advisorId);
+    return { student: publicUser(st), advisorName: adv ? adv.name : "-", first: days[0], last: days[27],
+      weeks, total: summarize(days), limits: { SLEEP_MIN, SLEEP_MAX, PHONE_WARN } };
+  }
+
+  // ---------- یادداشت محرمانه: فقط نویسنده‌اش می‌بیند (حتی مدیر یادداشت مشاور دیگر را نمی‌بیند) ----------
+  async function myNotes(studentId) {
+    const v = viewer();
+    requireRole(v, "manager", "advisor");
+    studentFor(v, studentId);
+    return db.notes.filter((n) => n.studentId === studentId && n.authorId === v.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  async function addNote(studentId, text) {
+    const v = viewer();
+    requireRole(v, "manager", "advisor");
+    studentFor(v, studentId);
+    text = String(text || "").trim();
+    if (!text) fail("متن یادداشت را بنویسید.");
+    const n = { id: U.uid("n"), authorId: v.id, studentId, text, createdAt: now() };
+    db.notes.push(n);
+    save();
+    return n;
+  }
+  async function deleteNote(id) {
+    const v = viewer();
+    const before = db.notes.length;
+    db.notes = db.notes.filter((n) => !(n.id === id && n.authorId === v.id));
+    if (db.notes.length === before) fail("یادداشت پیدا نشد.");
+    save();
+  }
+
   async function overview() {
     const v = viewer();
     requireRole(v, "manager", "advisor", "supporter");
@@ -545,7 +596,7 @@ const Store = (() => {
     staff, createStaff, removeStaff, resetPassword,
     students, student, bulkAddStudents, assignSupporter, distributeToSupporters, moveStudents, deleteStudents, resetStudentPasswords,
     myDay, saveMorning, saveNight, addTask, toggleTask, deleteTask,
-    history, week, overview,
+    history, week, month, overview, myNotes, addNote, deleteNote,
     sendFeedback, feedbackFor, inbox, markRead, myFeedback,
     sendParentMessage, parentMessagesFor, myChild, ackParentMessage,
   };
